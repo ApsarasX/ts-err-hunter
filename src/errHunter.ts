@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
+import chalk from "chalk";
 import _ from "lodash";
 import ErrorStackParser, { StackFrame } from "error-stack-parser";
 import { SourceMapConsumer, NullableMappedPosition } from "source-map";
-import { OUTPUT_FILE_NAME } from "./constant";
 
 interface FnRange {
   start: number;
@@ -30,18 +30,27 @@ export class ErrHunter {
     this._err = err;
   }
 
-  async getFnSourceCode(depth: number = 1): Promise<Code | null> {
+  async getErrorTrace(): Promise<string> {
     const userStackFrames = this._getUserStackFrames();
-    const topFrame = userStackFrames[0];
-    const errLocation = this._getLocation(topFrame);
-    const originalPosition = await this._getOriginalPosition(errLocation);
-    if (originalPosition === null) {
-      return null;
+    let result = `${this._err.name}: ${chalk.red(this._err.message)}\n`;
+    for(const frame of userStackFrames) {
+      const errLocation = this._getLocation(frame);
+      const originalPosition = await this._getOriginalPosition(errLocation);
+      if (originalPosition === null ||
+          originalPosition.source === null ||
+          originalPosition.line === null ||
+          originalPosition.column === null) {
+        continue;
+      }
+      const errFilePath = path.normalize(`${path.dirname(errLocation.fileName)}/${originalPosition.source}`);
+      let location = `${chalk.cyan(errFilePath)}:${chalk.yellow(originalPosition.line)}:${chalk.yellow(originalPosition.column)}`;
+      if(frame.functionName) {
+        location = `${frame.functionName} (${location})`;
+      }
+      location = `    at ${location}\n`;
+      result += location;
     }
-    const sourceFile = path.normalize(`${path.dirname(errLocation.fileName)}/${originalPosition.source!}`);
-    const code = this._getFnCode(sourceFile, originalPosition.line!, originalPosition.column!);
-    code.content = this._prettifyCode(code, originalPosition.line!, originalPosition.column!);
-    return code;
+    return result;
   }
 
   private _getUserStackFrames(): StackFrame[] {
@@ -77,62 +86,5 @@ export class ErrHunter {
         return resolve(res);
       });
     });
-  }
-
-  private _getFnCode(fileName: string, line: number, column: number): Code {
-    const fileContent = fs.readFileSync(fileName).toString();
-    const lines = fileContent.split("\n");
-    let pos = 0;
-    let targetLine = 1;
-    while (targetLine < line) {
-      pos += lines[targetLine].length;
-      targetLine += 1;
-    }
-    pos += column;
-    const fileFnRange = JSON.parse(fs.readFileSync(OUTPUT_FILE_NAME).toString());
-    const positions = fileFnRange[fileName] || fileFnRange[path.relative(process.cwd(), fileName)];
-    const fnCodeRange = _
-      .chain(positions)
-      .filter((e: FnRange) => e.start <= pos && e.end >= pos)
-      .maxBy((e: FnRange) => e.end - e.start)
-      .value();
-    const start = fnCodeRange.start;
-    const end = fnCodeRange.end;
-    const startLineNumber = this._getLineNumberByPos(fileName, start);
-    const endLineNumber = this._getLineNumberByPos(fileName, end);
-    const codeContent = fileContent.substring(start, end).trim();
-    return { fileName, content: codeContent, startLineNumber, endLineNumber };
-  }
-
-  private _getLineNumberByPos(fileName: string, pos: number): number {
-    const content = fs.readFileSync(fileName).toString();
-    const lines = content.split("\n");
-    let posIdx = 0;
-    for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
-      if (posIdx + lines[lineIdx].length < pos) {
-        posIdx += lines[lineIdx].length + 1;
-        continue;
-      }
-      return lineIdx + 1;
-    }
-    console.warn(`[ts-err-hunter] Can't find line number for position ${pos} in file ${fileName}!`);
-    return -1;
-  }
-
-  private _prettifyCode(code: Code, errLine: number, errColumn: number): string {
-    const lines = code.content.split("\n");
-    const maxLineNumberLen = (code.startLineNumber + lines.length).toString().length;
-    return lines
-      .map((line: string, idx: number) => {
-        const lineNumberPrefix = (code.startLineNumber + idx).toString().padStart(maxLineNumberLen);
-        let content = `> ${lineNumberPrefix} ${line}`;
-        if (errLine === code.startLineNumber + idx) {
-          content += "\n";
-          content += _.repeat(" ", `> ${lineNumberPrefix} `.length + errColumn) + `^ ------------> ${this._err.message}`;
-          content += "\n";
-        }
-        return content;
-      })
-      .join("\n");
   }
 }
