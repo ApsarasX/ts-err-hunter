@@ -123,11 +123,8 @@ const foo = () => {
   try {
     foo();
   } catch (err) {
-    const sourceCode = await err.getSourceCode();
-    if (sourceCode) {
-      console.log(`source file: ${sourceCode.fileName}`);
-      console.log(sourceCode.content);
-    }
+    const errorTrace = await err.getErrorTrace();
+    console.log(errorTrace);
     throw err;
   }
 })();

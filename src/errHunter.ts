@@ -32,7 +32,7 @@ export class ErrHunter {
 
   async getErrorTrace(): Promise<string> {
     const userStackFrames = this._getUserStackFrames();
-    let result = `${this._err.name}: ${chalk.red(this._err.message)}\n`;
+    let result = `${this._err.name}: ${this._err.message}\n`;
     for(const frame of userStackFrames) {
       const errLocation = this._getLocation(frame);
       const originalPosition = await this._getOriginalPosition(errLocation);
